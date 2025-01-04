@@ -41,7 +41,7 @@ source ${TOPDIR}/../scripts/utils.sh
 source ${TOPDIR}/../scripts/cfg_files.sh
 
 # defaults
-export JOB_CFG_FILE="${JOB_CFG_FILE_OVERRIDE:=./cfg/job.cfg}"
+export JOB_CFG_FILE="${JOB_CFG_FILE_OVERRIDE:-./cfg/job.cfg}"
 
 # check if ${JOB_CFG_FILE} exists
 if [[ ! -r "${JOB_CFG_FILE}" ]]; then
@@ -81,7 +81,7 @@ while [[ $# -gt 0 ]]; do
       POSITIONAL_ARGS+=("$@") # save positional args
       break
       ;;
-    -*|--*)
+    -*)
       fatal_error "Unknown option: $1" "${CMDLINE_ARG_UNKNOWN_EXITCODE}"
       ;;
     *)  # No more options
@@ -157,20 +157,22 @@ if [[ ${SLURM_OUTPUT_FOUND} -eq 1 ]]; then
   [[ ${VERBOSE} -ne 0 ]] && echo "${grep_out}"
 fi
 
-TGZ=-1
-TARBALL=
-if [[ ${SLURM_OUTPUT_FOUND} -eq 1 ]]; then
-  GP_tgz_created="\.tar\.gz created!"
-  grep_out=$(grep -v "^>> searching for " ${job_dir}/${job_out} | grep "${GP_tgz_created}" | sort -u)
-  if [[ $? -eq 0 ]]; then
-      TGZ=1
-      TARBALL=$(echo ${grep_out} | sed -e 's@^.*/\(eessi[^/ ]*\) .*$@\1@')
-  else
-      TGZ=0
-  fi
-  # have to be careful to not add searched for pattern into slurm out file
-  [[ ${VERBOSE} -ne 0 ]] && echo ">> searching for '"${GP_tgz_created}"'"
-  [[ ${VERBOSE} -ne 0 ]] && echo "${grep_out}"
+if [[ -z $CHECK_BUILD_CUSTOM_ARTEFACTS ]]; then
+    TGZ=-1
+    TARBALL=
+    if [[ ${SLURM_OUTPUT_FOUND} -eq 1 ]]; then
+      GP_tgz_created="\.tar\.gz created!"
+      grep_out=$(grep -v "^>> searching for " ${job_dir}/${job_out} | grep "${GP_tgz_created}" | sort -u)
+      if [[ $? -eq 0 ]]; then
+          TGZ=1
+          TARBALL=$(echo ${grep_out} | sed -e 's@^.*/\(eessi[^/ ]*\) .*$@\1@')
+      else
+          TGZ=0
+      fi
+      # have to be careful to not add searched for pattern into slurm out file
+      [[ ${VERBOSE} -ne 0 ]] && echo ">> searching for '"${GP_tgz_created}"'"
+      [[ ${VERBOSE} -ne 0 ]] && echo "${grep_out}"
+    fi
 fi
 
 [[ ${VERBOSE} -ne 0 ]] && echo "SUMMARY: ${job_dir}/${job_out}"
@@ -180,7 +182,9 @@ fi
 [[ ${VERBOSE} -ne 0 ]] && echo "  FAILED.....: $([[ $FAILED -eq 1 ]] && echo 'yes' || echo 'no') (no)"
 [[ ${VERBOSE} -ne 0 ]] && echo "  REQ_MISSING: $([[ $MISSING -eq 1 ]] && echo 'yes' || echo 'no') (no)"
 [[ ${VERBOSE} -ne 0 ]] && echo "  NO_MISSING.: $([[ $NO_MISSING -eq 1 ]] && echo 'yes' || echo 'no') (yes)"
-[[ ${VERBOSE} -ne 0 ]] && echo "  TGZ_CREATED: $([[ $TGZ -eq 1 ]] && echo 'yes' || echo 'no') (yes)"
+if [[ -z $CHECK_BUILD_CUSTOM_ARTEFACTS ]]; then
+    [[ ${VERBOSE} -ne 0 ]] && echo "  TGZ_CREATED: $([[ $TGZ -eq 1 ]] && echo 'yes' || echo 'no') (yes)"
+fi
 
 # Here, we try to do some additional analysis on the output file
 # to see if we can print a more clear 'reason' for the failure
@@ -208,8 +212,8 @@ if [[ ${SLURM_OUTPUT_FOUND} -eq 1 ]] && \
    [[ ${FAILED} -eq 0 ]] && \
    [[ ${MISSING} -eq 0 ]] && \
    [[ ${NO_MISSING} -eq 1 ]] && \
-   [[ ${TGZ} -eq 1 ]] && \
-   [[ ! -z ${TARBALL} ]]; then
+   [[ -n $CHECK_BUILD_CUSTOM_ARTEFACTS || ${TGZ} -eq 1 ]] && \
+   [[ -n $CHECK_BUILD_CUSTOM_ARTEFACTS || -n ${TARBALL} ]]; then
     # SUCCESS
     status="SUCCESS"
     reason=""
@@ -417,14 +421,20 @@ success_msg="found message(s) matching <code>${GP_no_missing}</code>"
 failure_msg="no message matching <code>${GP_no_missing}</code>"
 comment_details_list=${comment_details_list}$(add_detail ${NO_MISSING} 1 "${success_msg}" "${failure_msg}")
 
-success_msg="found message matching <code>${GP_tgz_created}</code>"
-failure_msg="no message matching <code>${GP_tgz_created}</code>"
-comment_details_list=${comment_details_list}$(add_detail ${TGZ} 1 "${success_msg}" "${failure_msg}")
+if [[ -z $CHECK_BUILD_CUSTOM_ARTEFACTS ]]; then
+    success_msg="found message matching <code>${GP_tgz_created}</code>"
+    failure_msg="no message matching <code>${GP_tgz_created}</code>"
+    comment_details_list=${comment_details_list}$(add_detail ${TGZ} 1 "${success_msg}" "${failure_msg}")
+fi
 
 # Now, do the actual replacement of __DETAILS_FMT__
 comment_details_fmt="<dt>_Details_</dt><dd>__DETAILS_LIST__</dd>"
 comment_details="${comment_details_fmt/__DETAILS_LIST__/${comment_details_list}}"
 comment_description=${comment_description/__DETAILS_FMT__/${comment_details}}
+
+if [[ -n $CHECK_BUILD_CUSTOM_ARTEFACTS ]]; then
+    return
+fi
 
 # first construct comment_artefacts_list
 # then use it to set comment_artefacts
